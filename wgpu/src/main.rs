@@ -1,10 +1,9 @@
 use std::{num::NonZeroU64, sync::Arc};
 
-use wgpu::{Backends, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BufferBinding, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipelineDescriptor, DeviceDescriptor, Features, Maintain, MapMode, PipelineLayoutDescriptor, PowerPreference, RequestAdapterOptionsBase, ShaderStages, include_spirv};
+use wgpu::*;
 
 fn main() {
     env_logger::init();
-
     pollster::block_on(run()).unwrap();
 }
 
@@ -21,8 +20,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         limits: Default::default(),
     }, None).await?;
 
-    let shader_desc = include_spirv!("../target/spirv-builder/spirv-unknown-vulkan1.1/release/deps/shader.spv.dir/module");
-    let shader = device.create_shader_module(&shader_desc);
     let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
         entries: &[BindGroupLayoutEntry {
@@ -36,27 +33,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             count: None,
         }],
     });
-    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
-    });
-    let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: "main_cs",
-    });
 
     let buffer = device.create_buffer(&BufferDescriptor {
         label: None,
         size: 512 * 4,
         usage: BufferUsages::STORAGE | BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
-    });
-
-    let mut command_encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-        label: None,
     });
     let bind_group = device.create_bind_group(&BindGroupDescriptor {
         label: None,
@@ -71,13 +53,30 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }],
     });
 
+    let shader_desc = include_spirv!("../target/spirv-builder/spirv-unknown-vulkan1.1/release/deps/shader.spv.dir/module");
+    let shader = device.create_shader_module(&shader_desc);
+    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+    let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main_cs",
+    });
+
+    let mut command_encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+        label: None,
+    });
     command_encoder.clear_buffer(&buffer, 0, None);
 
     {
         let mut compute_pass = command_encoder.begin_compute_pass(&ComputePassDescriptor { label: None });
         compute_pass.set_bind_group(0, &bind_group, &[]);
         compute_pass.set_pipeline(&compute_pipeline);
-        compute_pass.dispatch(8, 8, 8);
+        compute_pass.dispatch(64, 1, 1);
     }
 
     let command_buffer = command_encoder.finish();
@@ -88,13 +87,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::yield_now();
     });
 
+    // run the shader and wait for it to finish
     queue.submit([command_buffer]);
     queue.on_submitted_work_done().await;
 
     let buffer_slice = buffer.slice(..);
-    let buffer_map_future = buffer_slice.map_async(MapMode::Read);
-    buffer_map_future.await?;
-
+    buffer_slice.map_async(MapMode::Read).await?;
     let buffer_view = buffer_slice.get_mapped_range();
     println!("{:?}", bytemuck::cast_slice::<_, u32>(&buffer_view[..]));
 

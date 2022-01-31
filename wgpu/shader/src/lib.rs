@@ -9,11 +9,12 @@ use spirv_std::glam::UVec3;
 
 extern crate spirv_std;
 
-#[spirv(compute(threads(1)))]
+#[spirv(compute(threads(8)))]
 pub fn main_cs(
-    #[spirv(global_invocation_id)] gid: UVec3,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] buffer: &mut [u32],
+    #[spirv(global_invocation_id)]
+    gid: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)]
+    buffer: &mut [u32],
 ) {
-    let id = ((gid.x & 0x7) << 0) | ((gid.y & 0x7) << 3) | ((gid.z & 0x7) << 6);
-    buffer[id as usize] = id;
+    buffer[gid.x as usize] = 1;
 }
